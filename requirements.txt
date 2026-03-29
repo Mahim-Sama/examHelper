@@ -1,0 +1,13 @@
+langchain
+langchain-community
+langchain-cohere
+langchain-anthropic
+pinecone-client
+cohere
+anthropic
+python-dotenv
+pymupdf
+pytesseract
+Pillow
+pydantic
+rich
