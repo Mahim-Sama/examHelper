@@ -9,10 +9,9 @@ from rich import print
 @dataclass
 class Document:
     """
-    A single unit of loaded content before chunking.
-    We carry metadata from the very start - it will follow the
-    content all the way into Pinecone so retrieval results know
-    exactly where they came from.
+    One page or file worth of text, plus where it came from.
+    Metadata is attached here so it stays with the content all
+    the way through chunking and into Pinecone.
     """
     text: str
     metadata: dict = field(default_factory=dict)
@@ -20,19 +19,19 @@ class Document:
 
 def load_pdf(path: Path, priority: str = "normal") -> list[Document]:
     """
-    Extract text from every page of a PDF.
-    Each page becomes one Document - chunking happens later.
+    Pull text out of every page of a PDF.
+    Each page becomes its own Document - chunking comes later.
 
-    We load page-by-page (not the whole PDF at once) because:
-    1. A 1000-page textbook won't crash your RAM
-    2. Page number metadata is free to capture this way
+    Pages are loaded one at a time so a large textbook does not
+    load the entire file into memory at once. Page numbers are
+    also captured this way for free.
     """
     docs = []
     pdf   = fitz.open(str(path))
 
     for page_num, page in enumerate(pdf, start=1):
         text = page.get_text("text").strip()
-        if not text:          # skip empty/image-only pages
+        if not text:          # skip empty or image-only pages
             continue
         docs.append(Document(
             text=text,
@@ -64,10 +63,10 @@ def load_text(path: Path, priority: str = "normal") -> list[Document]:
 
 def load_image_ocr(path: Path, priority: str = "normal") -> list[Document]:
     """
-    Run OCR on a handwritten note image.
-    pytesseract wraps Tesseract - install Tesseract on Windows from:
-    https://github.com/UB-Mannheim/tesseract/wiki
-    Then add its path to your system PATH.
+    Run OCR on a handwritten note image and return the text.
+    pytesseract is a wrapper around Tesseract. To install Tesseract
+    on Windows grab it from https://github.com/UB-Mannheim/tesseract/wiki
+    and add its folder to your system PATH.
     """
     img  = Image.open(str(path))
     text = pytesseract.image_to_string(img).strip()
@@ -89,8 +88,8 @@ def load_image_ocr(path: Path, priority: str = "normal") -> list[Document]:
 
 def load_folder(folder: Path, priority: str = "normal") -> list[Document]:
     """
-    Load all supported files from a folder recursively.
-    Use priority="exam_hint" for your exam_hints/ folder.
+    Load all supported files from a folder, including subfolders.
+    Pass priority="exam_hint" when loading your exam hints folder.
     """
     loaders = {
         ".pdf": load_pdf,

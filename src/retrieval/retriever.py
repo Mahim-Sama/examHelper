@@ -11,40 +11,36 @@ from config import (
 def retrieve(query: str, top_k: int = TOP_K_RETRIEVAL,
              filter_priority: str | None = None) -> list[dict]:
     """
-    Embed the query and find the most semantically similar chunks.
+    Embed the query and return the closest matching chunks from Pinecone.
 
-    Note input_type="search_query" here - different from indexing!
-    Cohere uses this to produce a query-optimised embedding that
-    aligns better with document embeddings in the vector space.
+    input_type="search_query" is different from what we use during
+    indexing. Cohere produces a slightly different embedding for queries
+    so they align better with the stored document embeddings.
 
-    filter_priority: pass "exam_hint" to retrieve only from your
-    priority notes - useful for last-minute cramming sessions.
+    Pass filter_priority="exam_hint" to search only in your priority
+    notes rather than the full textbook.
     """
     co    = cohere.Client(api_key=COHERE_API_KEY)
     index = Pinecone(api_key=PINECONE_API_KEY).Index(PINECONE_INDEX_NAME)
 
-    # Embed the query
     response  = co.embed(
         texts      = [query],
         model      = COHERE_EMBED_MODEL,
-        input_type = "search_query",    # different from indexing!
+        input_type = "search_query",
     )
     query_vec = response.embeddings[0]
 
-    # Build optional metadata filter
     pinecone_filter = {}
     if filter_priority:
         pinecone_filter["priority"] = {"$eq": filter_priority}
 
-    # Search Pinecone
     results = index.query(
-        vector          = query_vec,
-        top_k           = top_k,
-        include_metadata= True,
-        filter          = pinecone_filter if pinecone_filter else None,
+        vector           = query_vec,
+        top_k            = top_k,
+        include_metadata = True,
+        filter           = pinecone_filter if pinecone_filter else None,
     )
 
-    # Return clean list of matches with text and metadata
     return [
         {
             "text":     match["metadata"]["text"],

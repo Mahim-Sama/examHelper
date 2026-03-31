@@ -6,15 +6,14 @@ from config import CHUNK_SIZE, CHUNK_OVERLAP
 
 def chunk_documents(docs: list[Document]) -> list[Document]:
     """
-    Split each Document into smaller overlapping chunks.
+    Split each Document into smaller overlapping pieces.
 
-    RecursiveCharacterTextSplitter tries to split on natural
-    boundaries in this order: paragraphs → sentences → words → chars.
-    This means it won't cut a sentence in half if it can avoid it.
+    RecursiveCharacterTextSplitter tries these split points in order:
+    paragraph breaks, line breaks, sentence endings, spaces, then
+    individual characters. It avoids cutting mid-sentence when possible.
 
-    The overlap means chunk N and chunk N+1 share CHUNK_OVERLAP
-    characters — so a concept that spans a chunk boundary still
-    appears complete in at least one chunk.
+    The overlap means consecutive chunks share some text so a concept
+    that sits near a split boundary still appears fully in one chunk.
     """
     splitter = RecursiveCharacterTextSplitter(
         chunk_size        = CHUNK_SIZE,
@@ -29,10 +28,10 @@ def chunk_documents(docs: list[Document]) -> list[Document]:
             chunks.append(Document(
                 text     = split_text,
                 metadata = {
-                    **doc.metadata,       # preserve all original metadata
-                    "chunk_index": i,     # position within original document
+                    **doc.metadata,       # keep all original metadata
+                    "chunk_index": i,     # position within the source page
                 }
             ))
 
-    print(f"[green]{len(docs)} documents → {len(chunks)} chunks[/green]")
+    print(f"[green]{len(docs)} documents -> {len(chunks)} chunks[/green]")
     return chunks

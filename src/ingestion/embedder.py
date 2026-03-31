@@ -15,10 +15,10 @@ from rich.progress import track
 
 def get_pinecone_index():
     """
-    Create the Pinecone index if it doesn't exist, then return it.
-    The dimension MUST match the embedding model's output size (1024
-    for Cohere embed-english-v3.0). If you ever change models, you
-    need to delete and recreate the index.
+    Create the Pinecone index if it does not exist, then return it.
+    The dimension must match the embedding model output size (1024
+    for embed-english-v3.0). If you swap models, delete and recreate
+    the index or the dimension mismatch will cause an error.
     """
     pc = Pinecone(api_key=PINECONE_API_KEY)
 
@@ -27,7 +27,7 @@ def get_pinecone_index():
         pc.create_index(
             name      = PINECONE_INDEX_NAME,
             dimension = EMBEDDING_DIMENSION,
-            metric    = "cosine",          # cosine similarity for semantic search
+            metric    = "cosine",
             spec      = ServerlessSpec(
                 cloud  = PINECONE_CLOUD,
                 region = PINECONE_REGION
@@ -42,21 +42,22 @@ def get_pinecone_index():
 
 def embed_and_store(chunks: list[Document], batch_size: int = 90) -> None:
     """
-    Embed chunks with Cohere and upsert them into Pinecone.
+    Embed each chunk with Cohere and store the vectors in Pinecone.
 
-    We process in batches because:
-    1. Cohere's API has a max batch size of 96 texts
-    2. Pinecone upsert works best with batches of ~100 vectors
+    Batching is needed because Cohere's API accepts at most 96 texts
+    per call and Pinecone upsert performs best around 100 vectors.
 
-    input_type="search_document" tells Cohere these are documents
-    being indexed (not queries). Cohere embed-v3 uses this to
-    optimise the embedding for retrieval - always set this correctly.
+    input_type="search_document" tells Cohere these are passages being
+    indexed, not a search query. Always use the right type or retrieval
+    quality drops.
     """
     co    = cohere.Client(api_key=COHERE_API_KEY)
     index = get_pinecone_index()
 
-    # Proactive rate-limiter state for Cohere trial plan (100k tokens/min)
-    TOKEN_LIMIT   = 90_000   # stay 10% below the hard 100k limit
+    # Track how many tokens have been sent in the current 60s window.
+    # The Cohere trial plan allows 100k tokens per minute, so we stay
+    # under 90k to leave a small buffer before hitting the hard limit.
+    TOKEN_LIMIT   = 90_000
     window_start  = time.monotonic()
     window_tokens = 0
 
@@ -67,35 +68,38 @@ def embed_and_store(chunks: list[Document], batch_size: int = 90) -> None:
         batch  = chunks[batch_start : batch_start + batch_size]
         texts  = [doc.text for doc in batch]
 
-        # Estimate token cost (1 token ≈ 4 chars — good enough to pace requests)
+        # Rough token estimate: 1 token is about 4 characters on average
         batch_tokens = sum(len(t) // 4 for t in texts)
 
-        # If this batch would exceed the window budget, sleep until the window resets
         elapsed = time.monotonic() - window_start
         if window_tokens + batch_tokens > TOKEN_LIMIT:
+            # Sending this batch would go over the limit, so wait out
+            # the rest of the current window before continuing
             sleep_for = max(0.0, 60.0 - elapsed)
             if sleep_for > 0:
-                print(f"[cyan]Approaching token limit — pausing {sleep_for:.1f}s to reset window...[/cyan]")
+                print(f"[cyan]Approaching token limit - pausing {sleep_for:.1f}s to reset window...[/cyan]")
                 time.sleep(sleep_for)
             window_start  = time.monotonic()
             window_tokens = 0
         elif elapsed >= 60.0:
-            # Window already expired naturally — reset counters
+            # The window expired on its own, just reset the counters
             window_start  = time.monotonic()
             window_tokens = 0
 
-        # Retry loop kept as a safety net in case the estimate is off
+        # Retry up to 5 times if the API still rejects the request.
+        # This should rarely trigger since the window tracking above
+        # keeps us below the limit proactively.
         for attempt in range(5):
             try:
                 response = co.embed(
                     texts      = texts,
                     model      = COHERE_EMBED_MODEL,
-                    input_type = "search_document",  # critical — not "search_query"
+                    input_type = "search_document",
                 )
                 break
             except TooManyRequestsError:
                 wait = 60 * (attempt + 1)
-                print(f"[yellow]Rate limit hit — waiting {wait}s before retry {attempt + 1}/5...[/yellow]")
+                print(f"[yellow]Rate limit hit - waiting {wait}s before retry {attempt + 1}/5...[/yellow]")
                 time.sleep(wait)
                 window_start  = time.monotonic()
                 window_tokens = 0
@@ -105,7 +109,6 @@ def embed_and_store(chunks: list[Document], batch_size: int = 90) -> None:
         window_tokens += batch_tokens
         embeddings = response.embeddings
 
-        # Build Pinecone vectors: (id, embedding, metadata)
         vectors = []
         for i, (doc, emb) in enumerate(zip(batch, embeddings)):
             vector_id = f"{doc.metadata['source']}_p{doc.metadata['page']}_c{doc.metadata['chunk_index']}"
@@ -114,7 +117,7 @@ def embed_and_store(chunks: list[Document], batch_size: int = 90) -> None:
                 "values":   emb,
                 "metadata": {
                     **doc.metadata,
-                    "text": doc.text,   # store text in metadata for retrieval
+                    "text": doc.text,   # stored so retrieval can return the raw text
                 }
             })
 
