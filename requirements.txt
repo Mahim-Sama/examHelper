@@ -1,8 +1,9 @@
 langchain
+langchain-text-splitters
 langchain-community
 langchain-cohere
 langchain-anthropic
-pinecone-client
+pinecone
 cohere
 anthropic
 python-dotenv
