@@ -4,3 +4,14 @@ __pycache__/
 *.pyc
 data/processed/
 .examragenv
+*.pdf
+*.docx
+*.xlsx
+*.csv
+*.zip
+*.tar.gz
+*.jpg
+*.png
+*.gif
+*.JPEG
+*.bmp
