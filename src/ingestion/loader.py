@@ -10,7 +10,7 @@ from rich import print
 class Document:
     """
     A single unit of loaded content before chunking.
-    We carry metadata from the very start — it will follow the
+    We carry metadata from the very start - it will follow the
     content all the way into Pinecone so retrieval results know
     exactly where they came from.
     """
@@ -21,10 +21,10 @@ class Document:
 def load_pdf(path: Path, priority: str = "normal") -> list[Document]:
     """
     Extract text from every page of a PDF.
-    Each page becomes one Document — chunking happens later.
+    Each page becomes one Document - chunking happens later.
 
     We load page-by-page (not the whole PDF at once) because:
-    1. A 400-page textbook won't crash your RAM
+    1. A 1000-page textbook won't crash your RAM
     2. Page number metadata is free to capture this way
     """
     docs = []
@@ -65,7 +65,7 @@ def load_text(path: Path, priority: str = "normal") -> list[Document]:
 def load_image_ocr(path: Path, priority: str = "normal") -> list[Document]:
     """
     Run OCR on a handwritten note image.
-    pytesseract wraps Tesseract — install Tesseract on Windows from:
+    pytesseract wraps Tesseract - install Tesseract on Windows from:
     https://github.com/UB-Mannheim/tesseract/wiki
     Then add its path to your system PATH.
     """

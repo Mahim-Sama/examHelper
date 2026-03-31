@@ -13,12 +13,12 @@ def retrieve(query: str, top_k: int = TOP_K_RETRIEVAL,
     """
     Embed the query and find the most semantically similar chunks.
 
-    Note input_type="search_query" here — different from indexing!
+    Note input_type="search_query" here - different from indexing!
     Cohere uses this to produce a query-optimised embedding that
     aligns better with document embeddings in the vector space.
 
     filter_priority: pass "exam_hint" to retrieve only from your
-    priority notes — useful for last-minute cramming sessions.
+    priority notes - useful for last-minute cramming sessions.
     """
     co    = cohere.Client(api_key=COHERE_API_KEY)
     index = Pinecone(api_key=PINECONE_API_KEY).Index(PINECONE_INDEX_NAME)
