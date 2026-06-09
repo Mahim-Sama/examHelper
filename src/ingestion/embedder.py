@@ -3,10 +3,11 @@ import time
 import cohere
 from cohere.errors import TooManyRequestsError
 from pinecone import Pinecone, ServerlessSpec
+from pinecone_text.sparse import BM25Encoder
 from .loader import Document
 from config import (
     COHERE_API_KEY, COHERE_EMBED_MODEL,
-    PINECONE_API_KEY, PINECONE_INDEX_NAME,
+    PINECONE_API_KEY, PINECONE_HYBRID_INDEX_NAME,
     PINECONE_CLOUD, PINECONE_REGION, EMBEDDING_DIMENSION
 )
 from rich import print
@@ -15,19 +16,21 @@ from rich.progress import track
 
 def get_pinecone_index():
     """
-    Create the Pinecone index if it does not exist, then return it.
-    The dimension must match the embedding model output size (1024
-    for embed-english-v3.0). If you swap models, delete and recreate
-    the index or the dimension mismatch will cause an error.
+    Create the hybrid Pinecone index if it doesn't exist, then return it.
+
+    KEY DIFFERENCE from Phase 1: metric is now "dotproduct" instead of
+    "cosine". Hybrid search (dense + sparse) requires dotproduct because
+    Pinecone combines the two scores additively at query time. With cosine,
+    the normalization step would break that addition.
     """
     pc = Pinecone(api_key=PINECONE_API_KEY)
 
-    if PINECONE_INDEX_NAME not in pc.list_indexes().names():
-        print(f"Creating Pinecone index [cyan]{PINECONE_INDEX_NAME}[/cyan]...")
+    if PINECONE_HYBRID_INDEX_NAME not in pc.list_indexes().names():
+        print(f"Creating hybrid Pinecone index [cyan]{PINECONE_HYBRID_INDEX_NAME}[/cyan]...")
         pc.create_index(
-            name      = PINECONE_INDEX_NAME,
+            name      = PINECONE_HYBRID_INDEX_NAME,
             dimension = EMBEDDING_DIMENSION,
-            metric    = "cosine",
+            metric    = "dotproduct",       # required for hybrid search
             spec      = ServerlessSpec(
                 cloud  = PINECONE_CLOUD,
                 region = PINECONE_REGION
@@ -35,28 +38,31 @@ def get_pinecone_index():
         )
         print("[green]Index created.[/green]")
     else:
-        print(f"[yellow]Index '{PINECONE_INDEX_NAME}' already exists.[/yellow]")
+        print(f"[yellow]Index '{PINECONE_HYBRID_INDEX_NAME}' already exists.[/yellow]")
 
-    return pc.Index(PINECONE_INDEX_NAME)
+    return pc.Index(PINECONE_HYBRID_INDEX_NAME)
 
 
 def embed_and_store(chunks: list[Document], batch_size: int = 90) -> None:
     """
-    Embed each chunk with Cohere and store the vectors in Pinecone.
+    Embed each chunk with Cohere (dense) + BM25 (sparse) and upsert to Pinecone.
 
-    Batching is needed because Cohere's API accepts at most 96 texts
-    per call and Pinecone upsert performs best around 100 vectors.
+    Why two representations?
+    - Dense (Cohere): captures semantic meaning. "eigenvalue decomposition" and
+      "matrix factorization" will be nearby even if they share no words.
+    - Sparse (BM25): captures exact keyword matches. If a student asks about
+      "BPTT" and the notes say "BPTT", sparse will catch it even if the dense
+      embeddings are far apart due to abbreviation inconsistency.
 
-    input_type="search_document" tells Cohere these are passages being
-    indexed, not a search query. Always use the right type or retrieval
-    quality drops.
+    BM25Encoder.default() is pre-trained on MS-MARCO (Microsoft's large-scale
+    QA dataset). It provides reasonable IDF weights without needing to fit on
+    your specific corpus. Good enough for academic notes.
     """
     co    = cohere.Client(api_key=COHERE_API_KEY)
     index = get_pinecone_index()
+    bm25  = BM25Encoder.default()
 
     # Track how many tokens have been sent in the current 60s window.
-    # The Cohere trial plan allows 100k tokens per minute, so we stay
-    # under 90k to leave a small buffer before hitting the hard limit.
     TOKEN_LIMIT   = 90_000
     window_start  = time.monotonic()
     window_tokens = 0
@@ -68,13 +74,18 @@ def embed_and_store(chunks: list[Document], batch_size: int = 90) -> None:
         batch  = chunks[batch_start : batch_start + batch_size]
         texts  = [doc.text for doc in batch]
 
-        # Rough token estimate: 1 token is about 4 characters on average
+        # ── Sparse vectors (BM25) ────────────────────────────────────────────
+        # encode_documents() returns a list of {"indices": [...], "values": [...]}
+        # Each index maps to a token in BM25's vocabulary; the value is the
+        # TF-IDF-style weight for that token in this specific document.
+        # This is a sparse operation — most values are 0 and are omitted.
+        sparse_vecs = bm25.encode_documents(texts)
+
+        # ── Dense vectors (Cohere) ───────────────────────────────────────────
         batch_tokens = sum(len(t) // 4 for t in texts)
 
         elapsed = time.monotonic() - window_start
         if window_tokens + batch_tokens > TOKEN_LIMIT:
-            # Sending this batch would go over the limit, so wait out
-            # the rest of the current window before continuing
             sleep_for = max(0.0, 60.0 - elapsed)
             if sleep_for > 0:
                 print(f"[cyan]Approaching token limit - pausing {sleep_for:.1f}s to reset window...[/cyan]")
@@ -82,13 +93,9 @@ def embed_and_store(chunks: list[Document], batch_size: int = 90) -> None:
             window_start  = time.monotonic()
             window_tokens = 0
         elif elapsed >= 60.0:
-            # The window expired on its own, just reset the counters
             window_start  = time.monotonic()
             window_tokens = 0
 
-        # Retry up to 5 times if the API still rejects the request.
-        # This should rarely trigger since the window tracking above
-        # keeps us below the limit proactively.
         for attempt in range(5):
             try:
                 response = co.embed(
@@ -107,20 +114,22 @@ def embed_and_store(chunks: list[Document], batch_size: int = 90) -> None:
             raise RuntimeError("Cohere rate limit: all 5 retries exhausted.")
 
         window_tokens += batch_tokens
-        embeddings = response.embeddings
+        dense_vecs = response.embeddings
 
+        # ── Build and upsert vectors ─────────────────────────────────────────
         vectors = []
-        for i, (doc, emb) in enumerate(zip(batch, embeddings)):
+        for doc, dense, sparse in zip(batch, dense_vecs, sparse_vecs):
             vector_id = f"{doc.metadata['source']}_p{doc.metadata['page']}_c{doc.metadata['chunk_index']}"
             vectors.append({
-                "id":       vector_id,
-                "values":   emb,
+                "id":           vector_id,
+                "values":       dense,          # 1024-d dense embedding
+                "sparse_values": sparse,        # BM25 sparse encoding
                 "metadata": {
                     **doc.metadata,
-                    "text": doc.text,   # stored so retrieval can return the raw text
+                    "text": doc.text,
                 }
             })
 
         index.upsert(vectors=vectors)
 
-    print(f"[green]Successfully stored {len(chunks)} chunks in Pinecone.[/green]")
+    print(f"[green]Successfully stored {len(chunks)} chunks in Pinecone (hybrid index).[/green]")

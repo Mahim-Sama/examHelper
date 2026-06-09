@@ -4,6 +4,7 @@ langchain-community
 langchain-cohere
 langchain-anthropic
 pinecone
+pinecone-text
 cohere
 anthropic
 python-dotenv

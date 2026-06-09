@@ -7,8 +7,64 @@ from src.ingestion.chunker  import chunk_documents
 from src.ingestion.embedder import embed_and_store
 from src.retrieval.retriever import retrieve
 from src.generation.generator import answer_question, generate_problems, recap_topic
+from pinecone import Pinecone
 from rich import print
 from rich.prompt import Prompt
+from rich.table import Table
+import config
+
+
+def status():
+    """
+    Show what's stored in Pinecone and prove exam_hint filtering works.
+
+    Two checks:
+    1. Index stats — total vector count straight from Pinecone's metadata API.
+       No embeddings are computed; this is just a fast metadata call.
+    2. Filtered sample retrieval — runs a real hybrid query restricted to
+       exam_hint chunks. If it returns results, your priority tag is live
+       and filterable. If it returns 0, your ingest used priority="normal".
+    """
+    pc    = Pinecone(api_key=config.PINECONE_API_KEY)
+    index = pc.Index(config.PINECONE_HYBRID_INDEX_NAME)
+
+    # ── 1. Index stats ────────────────────────────────────────────────────────
+    stats       = index.describe_index_stats()
+    total       = stats.total_vector_count
+    dimension   = stats.dimension
+    print(f"\n[bold]Index:[/bold] [cyan]{config.PINECONE_HYBRID_INDEX_NAME}[/cyan]")
+    print(f"  Vectors stored : [green]{total}[/green]")
+    print(f"  Dimension      : {dimension}  (1024 = Cohere embed-english-v3.0)")
+    print(f"  Metric         : dotproduct  (required for hybrid search)\n")
+
+    # ── 2. Exam-hint filter check ─────────────────────────────────────────────
+    print("[bold]Exam-hint filter check[/bold] (retrieves top 5 exam_hint chunks):")
+    sample = retrieve("probability distribution", top_k=5, filter_priority="exam_hint")
+
+    if not sample:
+        print("[red]  No exam_hint chunks found.[/red] Did you ingest with --priority exam_hint?")
+        return
+
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Rank", style="dim", width=5)
+    table.add_column("Source", max_width=35)
+    table.add_column("Page", width=5)
+    table.add_column("Priority", width=10)
+    table.add_column("Rerank score", width=12)
+    table.add_column("Preview (first 80 chars)", max_width=50)
+
+    for i, chunk in enumerate(sample, 1):
+        table.add_row(
+            str(i),
+            chunk["source"],
+            str(chunk["page"]),
+            f"[yellow]{chunk['priority']}[/yellow]",
+            f"{chunk.get('rerank_score', 0):.4f}",
+            chunk["text"][:80].replace("\n", " "),
+        )
+
+    print(table)
+    print(f"\n[green]✓ exam_hint filter is working — {len(sample)} chunks returned.[/green]")
 
 
 def ingest(folder: str = "data/raw", priority: str = "normal"):
@@ -83,9 +139,9 @@ def save_recap_pdf(topic: str, markdown_text: str):
 
 if __name__ == "__main__":
     print("[bold]Exam RAG System[/bold]")
-    print("Commands: [ingest] [ask] [problems] [recap]\n")
+    print("Commands: [ingest] [ask] [problems] [recap] [status]\n")
 
-    cmd = Prompt.ask("Command", choices=["ingest", "ask", "problems", "recap"])
+    cmd = Prompt.ask("Command", choices=["ingest", "ask", "problems", "recap", "status"])
 
     if cmd == "ingest":
         folder   = Prompt.ask("Folder", default="data/raw")
@@ -104,3 +160,6 @@ if __name__ == "__main__":
     elif cmd == "recap":
         topic = Prompt.ask("Topic")
         recap(topic)
+
+    elif cmd == "status":
+        status()
