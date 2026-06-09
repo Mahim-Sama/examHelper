@@ -74,14 +74,14 @@ def embed_and_store(chunks: list[Document], batch_size: int = 90) -> None:
         batch  = chunks[batch_start : batch_start + batch_size]
         texts  = [doc.text for doc in batch]
 
-        # ── Sparse vectors (BM25) ────────────────────────────────────────────
+        # -- Sparse vectors (BM25) --------------------------------------------
         # encode_documents() returns a list of {"indices": [...], "values": [...]}
         # Each index maps to a token in BM25's vocabulary; the value is the
         # TF-IDF-style weight for that token in this specific document.
         # This is a sparse operation — most values are 0 and are omitted.
         sparse_vecs = bm25.encode_documents(texts)
 
-        # ── Dense vectors (Cohere) ───────────────────────────────────────────
+        # -- Dense vectors (Cohere) --------------------------------------------
         batch_tokens = sum(len(t) // 4 for t in texts)
 
         elapsed = time.monotonic() - window_start
@@ -116,7 +116,7 @@ def embed_and_store(chunks: list[Document], batch_size: int = 90) -> None:
         window_tokens += batch_tokens
         dense_vecs = response.embeddings
 
-        # ── Build and upsert vectors ─────────────────────────────────────────
+        # -- Build and upsert vectors --------------------------------------------
         vectors = []
         for doc, dense, sparse in zip(batch, dense_vecs, sparse_vecs):
             vector_id = f"{doc.metadata['source']}_p{doc.metadata['page']}_c{doc.metadata['chunk_index']}"

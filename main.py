@@ -19,16 +19,16 @@ def status():
     Show what's stored in Pinecone and prove exam_hint filtering works.
 
     Two checks:
-    1. Index stats — total vector count straight from Pinecone's metadata API.
+    1. Index stats - total vector count straight from Pinecone's metadata API.
        No embeddings are computed; this is just a fast metadata call.
-    2. Filtered sample retrieval — runs a real hybrid query restricted to
+    2. Filtered sample retrieval - runs a real hybrid query restricted to
        exam_hint chunks. If it returns results, your priority tag is live
        and filterable. If it returns 0, your ingest used priority="normal".
     """
     pc    = Pinecone(api_key=config.PINECONE_API_KEY)
     index = pc.Index(config.PINECONE_HYBRID_INDEX_NAME)
 
-    # ── 1. Index stats ────────────────────────────────────────────────────────
+    # --- 1. Index stats -----------------------------------------------------
     stats       = index.describe_index_stats()
     total       = stats.total_vector_count
     dimension   = stats.dimension
@@ -37,7 +37,7 @@ def status():
     print(f"  Dimension      : {dimension}  (1024 = Cohere embed-english-v3.0)")
     print(f"  Metric         : dotproduct  (required for hybrid search)\n")
 
-    # ── 2. Exam-hint filter check ─────────────────────────────────────────────
+    # --- 2. Exam-hint filter check --------------------------------------------
     print("[bold]Exam-hint filter check[/bold] (retrieves top 5 exam_hint chunks):")
     sample = retrieve("probability distribution", top_k=5, filter_priority="exam_hint")
 
@@ -64,7 +64,7 @@ def status():
         )
 
     print(table)
-    print(f"\n[green]✓ exam_hint filter is working — {len(sample)} chunks returned.[/green]")
+    print(f"\n[green] exam_hint filter is working — {len(sample)} chunks returned.[/green]")
 
 
 def ingest(folder: str = "data/raw", priority: str = "normal"):

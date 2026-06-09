@@ -69,7 +69,7 @@ def retrieve(
     index = Pinecone(api_key=PINECONE_API_KEY).Index(PINECONE_HYBRID_INDEX_NAME)
     bm25  = BM25Encoder.default()
 
-    # ── Stage 1: encode query as dense + sparse ──────────────────────────────
+    # --- Stage 1: encode query as dense + sparse ------------------------------
     dense_response = co.embed(
         texts      = [query],
         model      = COHERE_EMBED_MODEL,
@@ -83,7 +83,7 @@ def retrieve(
 
     dense_scaled, sparse_scaled = _hybrid_scale(dense_vec, sparse_vec, alpha)
 
-    # ── Stage 1: fetch from Pinecone ─────────────────────────────────────────
+    # --- Stage 1: fetch from Pinecone --------------------------------------------
     pinecone_filter = {}
     if filter_priority:
         pinecone_filter["priority"] = {"$eq": filter_priority}
@@ -110,7 +110,7 @@ def retrieve(
     if not candidates:
         return []
 
-    # ── Stage 2: rerank with Cohere cross-encoder ─────────────────────────────
+    # --- Stage 2: rerank with Cohere cross-encoder --------------------------------------------
     # The reranker receives the original query and each candidate chunk as text.
     # It returns relevance scores that are much more nuanced than vector cosine.
     rerank_response = co.rerank(
